@@ -4,6 +4,7 @@ from threading import Event, Thread
 from time import sleep
 
 from src.config.settings import ARTIFACTS, cache, engine
+from src.services import handover
 from src.services.domain import solve
 from src.services.workflow import claim, finish
 
@@ -18,6 +19,10 @@ def heartbeat(stop):
 
 def work():
     HEARTBEAT.unlink(missing_ok=True)
+    try:
+        handover.init(engine)
+    except Exception:
+        logging.exception('Handover sequence init failed')
     while True:
         try:
             job = claim()

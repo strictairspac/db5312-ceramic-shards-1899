@@ -1,5 +1,5 @@
 from sqlalchemy import (JSON, Column, ForeignKey, Integer, MetaData, String,
-                        Table, Text)
+                        Table, Text, UniqueConstraint)
 
 schema = MetaData()
 users = Table('accounts', schema,
@@ -38,3 +38,45 @@ audit = Table('audit_events', schema,
     Column('action', String(32), nullable=False),
     Column('reference', String(50), nullable=False),
     Column('created_at', String(32), nullable=False))
+
+# Transactional outbox: business writes and the records to be handed over commit
+# or roll back together.  Each row is immutable once written; the identity is a
+# monotonically increasing commit position used for ordered replay.
+outbox = Table('handover_outbox', schema,
+    Column('id', Integer, primary_key=True),
+    Column('seq', Integer, nullable=False, unique=True, index=True),
+    Column('kind', String(20), nullable=False, index=True),
+    Column('reference', String(50), nullable=False),
+    Column('payload', JSON, nullable=False),
+    Column('created_at', String(32), nullable=False),
+    UniqueConstraint('kind', 'reference', name='uq_handover_outbox_kind_reference'))
+
+# The handover ledger (交班账).  One row per business event, recorded once for
+# all crews; receipts are retried and rows may be delivered more than once, so
+# the unique outbox identity makes replay idempotent.  ``crew`` records which
+# crew confirmed the entry first (informational).
+ledger = Table('handover_ledger', schema,
+    Column('id', Integer, primary_key=True),
+    Column('outbox_id', ForeignKey('handover_outbox.id'), nullable=False, unique=True),
+    Column('crew', String(40), nullable=False),
+    Column('seq', Integer, nullable=False, unique=True, index=True),
+    Column('kind', String(20), nullable=False, index=True),
+    Column('reference', String(50), nullable=False),
+    Column('payload', JSON, nullable=False),
+    Column('recorded_at', String(32), nullable=False))
+
+# One checkpoint per crew.  A crew only advances its own cursor, so one crew's
+# stalled handover never blocks another crew's progress; the ledger itself is
+# shared and written once.
+cursors = Table('handover_cursors', schema,
+    Column('crew', String(40), primary_key=True),
+    Column('last_seq', Integer, nullable=False),
+    Column('updated_at', String(32), nullable=False))
+
+# Single counter row used to assign commit-ordered outbox positions.  The UPDATE
+# holds the row lock until the business transaction commits, so a lower seq is
+# always committed before a higher one: replay can safely resume from a cursor
+# even when an older transaction commits late.
+sequence = Table('handover_sequence', schema,
+    Column('name', String(40), primary_key=True),
+    Column('value', Integer, nullable=False))

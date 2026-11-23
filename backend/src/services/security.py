@@ -4,11 +4,11 @@ import secrets
 import time
 
 import jwt
-from fastapi import Depends, HTTPException
+from fastapi import Depends, Header, HTTPException
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import select
 
-from src.config.settings import AUTH_KEY, engine
+from src.config.settings import AUTH_KEY, HANDOVER_KEY, engine
 from src.constants.workflow import Role
 from src.models.tables import users
 
@@ -50,3 +50,21 @@ def reviewer(user=Depends(current_user)):
     if user['role'] != Role.REVIEWER:
         raise HTTPException(403, '需要复核员权限')
     return user['sub']
+
+
+def handover_access(authorization: str = Header(default=''),
+                    x_handover_key: str = Header(default='', alias='X-Handover-Key')):
+    """交班接口放行交班程序凭据，也允许已登录的工作台账号只读/同步。
+
+    交班程序使用独立的 ``HANDOVER_KEY``（未配置时回落到 ``AUTH_KEY``），与
+    交互式登录互不影响。
+    """
+    if HANDOVER_KEY and x_handover_key and hmac.compare_digest(str(x_handover_key), HANDOVER_KEY):
+        return 'handover'
+    if authorization.lower().startswith('bearer '):
+        try:
+            return jwt.decode(authorization[7:], AUTH_KEY, algorithms=['HS256'],
+                              options={'require': ['sub', 'role', 'exp']})
+        except jwt.InvalidTokenError:
+            pass
+    raise HTTPException(401, '需要交班程序凭据或登录账号')

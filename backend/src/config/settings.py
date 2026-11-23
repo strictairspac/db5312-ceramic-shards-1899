@@ -11,4 +11,5 @@ URL = URL.create(DRIVER, username=os.getenv('DB_USER', 'app'),
 engine = create_engine(URL, pool_pre_ping=True)
 cache = Redis.from_url(os.getenv('REDIS_URL', 'redis://redis:6379/0'), socket_timeout=3)
 AUTH_KEY = os.environ['AUTH_KEY']
+HANDOVER_KEY = os.getenv('HANDOVER_KEY', AUTH_KEY)
 ARTIFACTS = os.getenv('ARTIFACTS_DIR', '/work')

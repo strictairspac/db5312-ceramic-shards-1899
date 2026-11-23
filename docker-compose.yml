@@ -9,6 +9,7 @@ x-python: &python
     DB_USER: app
     DB_PASSWORD: ${DB_PASSWORD:-local-db-demo}
     AUTH_KEY: ${AUTH_KEY:-dev-example-key-local-5300-change-me}
+    HANDOVER_KEY: ${HANDOVER_KEY:-dev-handover-key-local-5300-change-me}
     SEED_DEMO: ${SEED_DEMO:-true}
     REDIS_URL: redis://redis:6379/0
   volumes: [artifacts:/work]

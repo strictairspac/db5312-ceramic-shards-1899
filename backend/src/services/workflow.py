@@ -7,7 +7,7 @@ from sqlalchemy import and_, or_, select
 from src.config.settings import cache, engine
 from src.constants.workflow import Status
 from src.models.tables import audit, cases, evidence, runs
-from src.services import domain
+from src.services import domain, handover
 from src.utils.encoding import canonical
 from src.utils.time import utc_time
 
@@ -86,7 +86,10 @@ def finish(run_id, token, result=None, error=None):
         if not count:
             return
         if result is not None:
-            conn.execute(evidence.insert().values(run_id=run_id, report=result, digest=digest))
+            evidence_id = conn.execute(evidence.insert().values(
+                run_id=run_id, report=result, digest=digest)).inserted_primary_key[0]
+            # 试算完成先入报告：与证据同事务提交，停机时不会只写业务不写待同步。
+            handover.record_report(conn, evidence_id, run_id, digest, result)
         log(conn, 'worker', status.value, run_id)
 
 
@@ -95,10 +98,14 @@ def review(identity, note, actor):
     if not note:
         raise HTTPException(422, '复核意见不能为空')
     with engine.begin() as conn:
-        found(conn, evidence, identity)
+        current = found(conn, evidence, identity)
+        reviewed_at = utc_time()
         count = conn.execute(evidence.update().where(evidence.c.id == identity, evidence.c.reviewed_at.is_(None))
-                            .values(review_note=note, reviewer=actor, reviewed_at=utc_time())).rowcount
+                            .values(review_note=note, reviewer=actor, reviewed_at=reviewed_at)).rowcount
         if count != 1:
             raise HTTPException(409, '该证据已经复核')
+        # 先入报告再入签字：补记尚无报告登记的旧证据，保证交班账里报告在前。
+        handover.ensure_report(conn, current)
+        handover.record_signature(conn, identity, actor, reviewed_at, note)
         log(conn, actor, 'review', identity)
         return found(conn, evidence, identity)
